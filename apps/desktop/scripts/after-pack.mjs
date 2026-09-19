@@ -17,6 +17,7 @@
  *   - electronPlatformName: 'win32' | 'darwin' | 'linux'
  *   - appOutDir:            the unpacked app directory for this target
  *   - packager.appInfo.productFilename: the exe basename (e.g. 'Hermes')
+ *   - packager.appInfo.productName:     the display name (e.g. 'Hermes Remote')
  */
 
 import path from 'node:path'
@@ -28,14 +29,19 @@ export default async function afterPack(context) {
     return
   }
 
-  const productName = context.packager?.appInfo?.productFilename || 'Hermes'
-  const exe = path.join(context.appOutDir, `${productName}.exe`)
+  const appInfo = context.packager?.appInfo
+  // The exe basename (no spaces, e.g. 'HermesRemote') and the display name
+  // (e.g. 'Hermes Remote') differ for distribution variants, so read both:
+  // the former locates the file, the latter brands its PE version resource.
+  const productFilename = appInfo?.productFilename || 'Hermes'
+  const productName = appInfo?.productName || productFilename
+  const exe = path.join(context.appOutDir, `${productFilename}.exe`)
   const desktopRoot = path.resolve(import.meta.dirname, '..')
 
   try {
-    await stampExeIdentity(exe, desktopRoot)
+    await stampExeIdentity(exe, desktopRoot, { productName })
   } catch (err) {
     // Never fail the build over a cosmetic stamp.
-    console.warn(`[after-pack] exe identity stamp failed (${err.message}); Hermes.exe keeps the stock Electron icon`)
+    console.warn(`[after-pack] exe identity stamp failed (${err.message}); ${productFilename}.exe keeps the stock Electron icon`)
   }
 }

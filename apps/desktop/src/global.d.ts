@@ -369,6 +369,10 @@ declare global {
       /** Launch flag: the app was started with --local, enabling the
        *  local-models GUI surfaces. Absent/false = every local surface hides. */
       localModelsEnabled?: boolean
+      /** Launch flag: Hermes Remote (client-only) distribution. No local Hermes
+       *  runtime exists or can be installed — hide local-install / local-backend
+       *  affordances and surface remote-connection flows only. */
+      clientOnlyEnabled?: boolean
       /** Launch flag: the Nous free tier is on for this launch
        *  (HERMES_GUEST_ONBOARDING=1 or --guest-onboarding). Read-only fact the
        *  main process also stamps onto every backend it spawns. */

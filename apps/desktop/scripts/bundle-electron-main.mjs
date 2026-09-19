@@ -33,9 +33,16 @@ const external = ['electron', 'node-pty', 'get-windows', 'fs']
 // behaves like a packaged build. Dev bundles (`--dev`) leave the env alone
 // so HERMES_DESKTOP_DEV_SERVER / source-tree resolution keep working.
 const isDev = process.argv.includes('--dev')
-const define = isDev
-  ? {}
-  : { 'process.env.HERMES_DESKTOP_IS_PACKAGED': JSON.stringify(true) }
+const isClientOnly = Boolean(process.env.HERMES_DESKTOP_CLIENT_ONLY)
+const define = {
+  ...(isDev ? {} : { 'process.env.HERMES_DESKTOP_IS_PACKAGED': JSON.stringify(true) }),
+  // Hermes Remote (client-only) distributions bake the flag in at build time:
+  // the packaged app then refuses to discover/run/spawn any local Hermes
+  // runtime and only ever connects to a remote backend. Dev bundles leave the
+  // env var live so `HERMES_DESKTOP_CLIENT_ONLY=1 npm run dev` exercises the
+  // same remote-only flow against the source tree.
+  ...(isClientOnly ? { 'process.env.HERMES_DESKTOP_CLIENT_ONLY': JSON.stringify(true) } : {})
+}
 
 // Bundle main.ts → dist/electron-main.mjs
 await build({

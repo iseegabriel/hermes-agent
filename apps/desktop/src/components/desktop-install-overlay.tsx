@@ -287,6 +287,11 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
   const { t } = useI18n()
   const copy = t.install
 
+  // Hermes Remote (client-only) distributions expose no local-install /
+  // local-backend surface at all — the renderer only ever offers connecting to
+  // a remote backend. Reported by preload from the `hermes:launch-flags` IPC.
+  const clientOnly = Boolean(window.hermesDesktop?.clientOnlyEnabled)
+
   const [state, setState] = useState<DesktopBootstrapState>(EMPTY_STATE)
   const [logOpen, setLogOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -376,6 +381,20 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
   const localStarting = forActiveRoot && localStart.starting
   const localStartError = forActiveRoot ? localStart.error : null
 
+  // Hermes Remote (client-only): the first-run gate's only resolution is a
+  // remote connection, so open the connect form as soon as the choice appears.
+  // `remoteAutoOpened` keeps this from fighting the user if they back out of
+  // the form onto the (remote-only) choice card, and resets naturally per
+  // component lifetime — a later setup-choice phase just shows the card.
+  const [remoteAutoOpened, setRemoteAutoOpened] = useState(false)
+
+  useEffect(() => {
+    if (clientOnly && state.setupChoice && !remoteAutoOpened) {
+      setRemoteAutoOpened(true)
+      setRemoteOpen(true)
+    }
+  }, [clientOnly, remoteAutoOpened, state.setupChoice])
+
   // Mount logic: show whenever a bootstrap is in flight, completed-with-error,
   // or actively running with a manifest. Hide entirely after a successful
   // completion so the rest of the UI can take over.
@@ -418,12 +437,16 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
           <div className="flex items-start gap-4">
             <BrandMark className="size-11 shrink-0" />
             <div className="min-w-0">
-              <h2 className="text-xl font-semibold tracking-tight">{copy.setupChoiceTitle}</h2>
-              <p className="mt-1.5 text-sm text-muted-foreground">{copy.setupChoiceDesc}</p>
+              <h2 className="text-xl font-semibold tracking-tight">
+                {clientOnly ? copy.connectExistingTitle : copy.setupChoiceTitle}
+              </h2>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                {clientOnly ? copy.connectExistingDesc : copy.setupChoiceDesc}
+              </p>
             </div>
           </div>
 
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <div className={clientOnly ? 'mt-6 grid gap-3' : 'mt-6 grid gap-3 sm:grid-cols-2'}>
             <button
               className="rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-4 text-left transition hover:bg-(--chrome-action-hover)"
               onClick={() => setRemoteOpen(true)}
@@ -433,52 +456,58 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
                 <Globe className="size-4 text-muted-foreground" />
                 <span>{copy.connectExistingTitle}</span>
               </div>
-              <p className="mt-2 text-sm leading-5 text-muted-foreground">{copy.connectExistingDesc}</p>
+              {!clientOnly ? (
+                <p className="mt-2 text-sm leading-5 text-muted-foreground">{copy.connectExistingDesc}</p>
+              ) : null}
             </button>
 
-            <button
-              className="rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-4 text-left transition hover:bg-(--chrome-action-hover) disabled:cursor-wait disabled:opacity-60"
-              disabled={localStarting}
-              onClick={async () => {
-                setLocalStart({ root: activeRoot, starting: true, error: null })
+            {!clientOnly ? (
+              <button
+                className="rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-4 text-left transition hover:bg-(--chrome-action-hover) disabled:cursor-wait disabled:opacity-60"
+                disabled={localStarting}
+                onClick={async () => {
+                  setLocalStart({ root: activeRoot, starting: true, error: null })
 
-                try {
-                  const desktop = window.hermesDesktop
+                  try {
+                    const desktop = window.hermesDesktop
 
-                  if (!desktop || typeof desktop.continueBootstrapLocal !== 'function') {
-                    throw new Error(copy.localStartUnavailable)
+                    if (!desktop || typeof desktop.continueBootstrapLocal !== 'function') {
+                      throw new Error(copy.localStartUnavailable)
+                    }
+
+                    await desktop.continueBootstrapLocal()
+                  } catch (err) {
+                    setLocalStart({ root: activeRoot, starting: false, error: errorMessage(err) })
                   }
-
-                  await desktop.continueBootstrapLocal()
-                } catch (err) {
-                  setLocalStart({ root: activeRoot, starting: false, error: errorMessage(err) })
-                }
-              }}
-              type="button"
-            >
-              <div className="flex items-center gap-2 text-sm font-medium">
-                {localStarting ? (
-                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                ) : (
-                  <Monitor className="size-4 text-muted-foreground" />
-                )}
-                <span>{copy.installLocalTitle}</span>
-              </div>
-              <p className="mt-2 text-sm leading-5 text-muted-foreground">{copy.installLocalDesc}</p>
-            </button>
+                }}
+                type="button"
+              >
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  {localStarting ? (
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Monitor className="size-4 text-muted-foreground" />
+                  )}
+                  <span>{copy.installLocalTitle}</span>
+                </div>
+                <p className="mt-2 text-sm leading-5 text-muted-foreground">{copy.installLocalDesc}</p>
+              </button>
+            ) : null}
           </div>
 
-          {localStartError ? (
+          {!clientOnly && localStartError ? (
             <div className="mt-4 flex items-start gap-2 text-sm text-destructive">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
               <span>{localStartError}</span>
             </div>
           ) : null}
 
-          <div className="mt-6 text-xs text-muted-foreground">
-            {copy.installTo}{' '}
-            <code className="font-mono text-(--ui-text-secondary)">{state.setupChoice.activeRoot}</code>
-          </div>
+          {!clientOnly ? (
+            <div className="mt-6 text-xs text-muted-foreground">
+              {copy.installTo}{' '}
+              <code className="font-mono text-(--ui-text-secondary)">{state.setupChoice.activeRoot}</code>
+            </div>
+          ) : null}
         </div>
       </div>
     )

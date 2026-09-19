@@ -518,6 +518,37 @@ if (USER_DATA_OVERRIDE) {
 
 const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged || Boolean(process.env.HERMES_DESKTOP_IS_PACKAGED)
+// Hermes Remote (client-only) builds never discover, adopt, or install a local
+// Hermes runtime — they only ever connect to a remote backend. Baked true at
+// build time by bundle-electron-main.mjs for the client-only distribution;
+// also honoured live from the environment (dev/testing against the source
+// tree). Guards against the first-run local install bootstrap, PATH/source
+// adoption, and every local spawn path in one place.
+const IS_CLIENT_ONLY = Boolean(process.env.HERMES_DESKTOP_CLIENT_ONLY)
+// Hermes Remote launcher support: `hermes serve` launchers pass the gateway as
+// `--remote-url=<url>` (or `--remote-url <url>`) on argv, while every
+// app-wide remote override in this file reads the HERMES_DESKTOP_REMOTE_URL
+// env (resolveDesktopRemoteRoute env rung, globalRemoteActive()). Normalize
+// the flag into the env EARLY — before any consumer runs — so launcher argv
+// and launcher env behave identically. An explicit env value still wins.
+function normalizeLaunchRemoteUrl(argv) {
+  const withEquals = argv.find(arg => arg.startsWith('--remote-url='))
+
+  if (withEquals) {
+    return withEquals.slice('--remote-url='.length).trim() || null
+  }
+
+  const flagIndex = argv.indexOf('--remote-url')
+  const value = flagIndex >= 0 ? argv[flagIndex + 1] : undefined
+
+  return value && !value.startsWith('--') ? value.trim() : null
+}
+
+const LAUNCH_REMOTE_URL = normalizeLaunchRemoteUrl(process.argv)
+
+if (LAUNCH_REMOTE_URL && !process.env.HERMES_DESKTOP_REMOTE_URL) {
+  process.env.HERMES_DESKTOP_REMOTE_URL = LAUNCH_REMOTE_URL
+}
 const IS_MAC = process.platform === 'darwin'
 const IS_WINDOWS = process.platform === 'win32'
 const IS_WSL = isWslEnvironment()
@@ -5077,6 +5108,30 @@ async function createActiveBackend(backendArgs) {
 }
 
 async function resolveHermesBackend(backendArgs) {
+  // Hermes Remote (client-only): never resolve a local runtime. Not an explicit
+  // HERMES_DESKTOP_HERMES_ROOT override, not the source checkout, not the
+  // active install, not `hermes` on PATH, not a system-Python hermes_cli — this
+  // build is remote-only by definition. The bootstrap-needed sentinel still
+  // drives the first-run gate below so a fresh machine lands on the
+  // "connect to a remote backend" screen; ensureRuntime() is separately
+  // guarded and refuses to turn that sentinel into an install.
+  if (IS_CLIENT_ONLY) {
+    return {
+      kind: 'bootstrap-needed',
+      label: 'Hermes Remote: no local runtime; connect to a remote backend',
+      command: null,
+      args: backendArgs,
+      bootstrap: true,
+      env: {},
+      shell: false,
+      // Hints for the bootstrap runner / UI layer:
+      activeRoot: ACTIVE_HERMES_ROOT,
+      installStamp: INSTALL_STAMP, // may be null in dev
+      isPackaged: IS_PACKAGED,
+      platform: process.platform
+    }
+  }
+
   // 1. Explicit override -- HERMES_DESKTOP_HERMES_ROOT points at a developer
   //    checkout. Honour it as-is (no bootstrap; the user is driving).
   const overrideRoot = process.env.HERMES_DESKTOP_HERMES_ROOT && path.resolve(process.env.HERMES_DESKTOP_HERMES_ROOT)
@@ -5280,6 +5335,20 @@ async function runEnsureRuntime(backend: any, assertStillOwned: () => void): Pro
   // will rewire startup to spawn the window first and route bootstrap events
   // to a renderer-side install overlay.
   if (backend.kind === 'bootstrap-needed') {
+    // Hermes Remote (client-only): the bootstrap-needed sentinel must never be
+    // converted into an install. This build cannot adopt or install a local
+    // runtime, so reaching the bootstrap runner here is a stale flow/bug —
+    // throw loudly rather than silently running install.ps1 on the user's
+    // machine. Callers that resolved a *remote* backend never pass through
+    // this branch.
+    if (IS_CLIENT_ONLY) {
+      const clientOnlyError: Error & { isClientOnly?: boolean } = new Error(
+        'Hermes Remote does not install or run a local Hermes runtime. Connect to a remote backend from the connection screen.'
+      )
+      clientOnlyError.isClientOnly = true
+      throw clientOnlyError
+    }
+
     rememberLog('[bootstrap] no Hermes install found; starting first-launch bootstrap')
 
     if (await handOffWindowsBootstrapRecovery('bootstrap-needed')) {
@@ -15073,6 +15142,15 @@ ipcMain.handle('hermes:window:openInTerminal', async (_event, sessionId, opts) =
     const profile = typeof opts?.profile === 'string' ? opts.profile.trim() : ''
     const backend = await resolveHermesBackend(tuiResumeArgs(sessionId.trim(), profile || undefined))
 
+    // Hermes Remote (client-only) has no local runtime to resume in a terminal;
+    // sessions live on the connected remote backend and stay in the app.
+    if (IS_CLIENT_ONLY) {
+      return {
+        ok: false,
+        error: 'Terminal handoff is unavailable in Hermes Remote (sessions run on the remote backend)'
+      }
+    }
+
     if (!backend.command) {
       return { ok: false, error: 'Hermes is not installed yet' }
     }
@@ -15201,6 +15279,15 @@ ipcMain.handle('hermes:bootstrap:repair', async () => {
   // transient backend errors on a perfectly healthy install, and deleting the
   // marker in that case stranded the app in first-run setup with no way back
   // (#72166). The explicit flag carries the intent instead.
+
+  // Hermes Remote (client-only): there is no local venv to repair. Reinstalling
+  // a local runtime is exactly what this build must never do, so refuse the
+  // request. Transient remote errors have their own retry/reauth paths.
+  if (IS_CLIENT_ONLY) {
+    rememberLog('[bootstrap] repair rejected: Hermes Remote build (client-only) has no local install')
+    return { ok: false, error: 'client-only', message: 'Hermes Remote connects to a remote backend only.' }
+  }
+
   bootstrapRepairAttempt += 1
 
   // Probe the live backend process so the guard can distinguish "venv is
@@ -15245,6 +15332,16 @@ ipcMain.handle('hermes:bootstrap:repair', async () => {
   return { ok: true }
 })
 ipcMain.handle('hermes:bootstrap:continue-local', async () => {
+  // Hermes Remote (client-only): there is no local install to continue. The
+  // first-run gate can only end in a remote connection, so refuse the request
+  // instead of letting a stale renderer (or a hidden local-install surface)
+  // kick off the installer. Renderers built for the client-only flag never
+  // offer this path; this guard is defense-in-depth.
+  if (IS_CLIENT_ONLY) {
+    rememberLog('[bootstrap] continue-local rejected: Hermes Remote build (client-only) has no local install')
+    return { ok: false, error: 'client-only', message: 'Hermes Remote connects to a remote backend only.' }
+  }
+
   rememberLog('[bootstrap] local install selected by renderer; continuing first-launch bootstrap')
   continueFirstRunLocalBootstrap()
 
@@ -17149,12 +17246,16 @@ ipcMain.on('hermes:translucency:support', event => {
 // pattern as translucency). `--local` gates every local-models GUI surface;
 // it arrives from `hermes desktop --local` or directly on Hermes.exe (a
 // shortcut edit), and survives self-relaunches because collectRelaunchArgs
-// only strips internal flags.
+// only strips internal flags. `clientOnly` reports the Hermes Remote build
+// flag (baked true in client-only distributions) so the renderer can hide
+// every local-install / local-backend affordance and show only remote
+// connection flows.
 ipcMain.on('hermes:launch-flags', event => {
   event.returnValue = {
     localModels: process.argv.includes('--local') || process.platform === 'win32' || process.platform === 'darwin',
     guestOnboarding: GUEST_ONBOARDING,
-    skipIntro: SKIP_INTRO
+    skipIntro: SKIP_INTRO,
+    clientOnly: IS_CLIENT_ONLY
   }
 })
 

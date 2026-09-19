@@ -21,7 +21,7 @@ function bootstrapState(overrides: Partial<DesktopBootstrapState> = {}): Desktop
   }
 }
 
-function installDesktopMock(state: DesktopBootstrapState) {
+function installDesktopMock(state: DesktopBootstrapState, clientOnly = false) {
   const bootstrapListeners = new Set<(event: DesktopBootstrapEvent) => void>()
 
   const desktop = {
@@ -37,6 +37,9 @@ function installDesktopMock(state: DesktopBootstrapState) {
     applyConnectionConfig: vi.fn(),
     oauthLoginConnectionConfig: vi.fn(),
     openExternal: vi.fn(),
+    // Hermes Remote (client-only) distributions report this launch-flag fact
+    // from preload; the overlay reads it to hide every local-install surface.
+    ...(clientOnly ? { clientOnlyEnabled: true } : {}),
     emitBootstrapEvent: (event: DesktopBootstrapEvent) => {
       for (const listener of bootstrapListeners) {
         listener(event)
@@ -572,5 +575,45 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     await waitFor(() => expect(screen.queryByText('Gateway URL')).toBeNull())
     expect(screen.queryByText('Hermes needs a one-time install')).toBeNull()
+  })
+})
+
+describe('DesktopInstallOverlay Hermes Remote (client-only)', () => {
+  it('auto-opens the remote connect form and never offers a local install', async () => {
+    installDesktopMock(
+      bootstrapState({
+        setupChoice: { platform: 'win32', activeRoot: 'C:\\Users\\me\\AppData\\Local\\hermes\\hermes-agent' }
+      }),
+      true
+    )
+
+    render(<DesktopInstallOverlay />)
+
+    // No click needed: client-only has exactly one first-run path, so the
+    // overlay opens the connect form as soon as the gate's choice appears.
+    expect(await screen.findByText('Gateway URL')).toBeTruthy()
+    expect(screen.queryByText('Install Hermes locally')).toBeNull()
+    expect(screen.queryByText('Set up Hermes Desktop')).toBeNull()
+  })
+
+  it('backs out onto a remote-only choice card with no local-install option', async () => {
+    installDesktopMock(
+      bootstrapState({
+        setupChoice: { platform: 'win32', activeRoot: 'C:\\Users\\me\\AppData\\Local\\hermes\\hermes-agent' }
+      }),
+      true
+    )
+
+    render(<DesktopInstallOverlay />)
+
+    expect(await screen.findByText('Gateway URL')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('Back'))
+
+    // The client-only choice card reuses the connect-existing copy for its
+    // heading AND its single action button, hence getAllByText.
+    expect((await screen.findAllByText('Connect to existing Hermes')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('Install Hermes locally')).toBeNull()
+    expect(screen.queryByText('Set up Hermes Desktop')).toBeNull()
   })
 })
