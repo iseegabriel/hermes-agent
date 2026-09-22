@@ -1,0 +1,54 @@
+# 每日将上游 NousResearch/hermes-agent 的 main 合并进本 fork 的 hermes-remote
+# 分支，保持 client-only 改动跟随上游。
+#
+# - 无更新时幂等退出（约 1 分钟）
+# - 合并冲突时本工作流失败（红 X）：需在本地
+#   `git fetch upstream && git merge upstream/main` 解冲突后推送
+#
+# 注意：GitHub 对公开 fork 的 scheduled workflow 默认禁用，本工作流通过
+# API 显式启用（见仓库管理脚本/说明）。
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 每天 02:00 UTC，早于私人仓库每周一 03:00 的构建检查
+  workflow_dispatch:
+
+permissions:
+  contents: write # merge commit 的推送
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout client-only branch (full history for merge)
+        uses: actions/checkout@v4
+        with:
+          ref: hermes-remote
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream main
+        shell: bash
+        run: |
+          git config user.name "hermes-remote-sync[bot]"
+          git config user.email "hermes-remote-sync@users.noreply.github.com"
+
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch upstream main --no-tags
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "already up to date with upstream/main"
+            exit 0
+          fi
+
+          echo "merging upstream/main into hermes-remote ..."
+          git merge upstream/main --no-edit
+          git push origin hermes-remote
+          git --no-pager log --oneline -5
