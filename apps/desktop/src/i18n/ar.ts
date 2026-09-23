@@ -528,7 +528,13 @@ export const ar = defineLocale({
       disable: 'تعطيل',
       failed: 'فشل',
       empty: 'لا توجد إضافات سطح مكتب مثبتة بعد.',
-      kinds: { bundled: 'مضمّنة', disk: 'على القرص', runtime: 'وقت التشغيل' }
+      kinds: { bundled: 'مضمّنة', disk: 'على القرص', runtime: 'وقت التشغيل' },
+      installModal: {
+        toolsConnected: n => `تم توصيل ${n} من الأدوات`,
+        skillsReady: names => (names.length === 1 ? `المهارة ${names[0]} جاهزة` : `${names.length} من المهارات جاهزة`),
+        nextChat: 'أدوات أخرى متاحة في دردشتك التالية',
+        serverNotConnected: (server, reason) => `خادم MCP ${server} غير متصل${reason ? `: ${reason}` : '.'}`
+      }
     },
     notifications: {
       title: 'الإشعارات',
@@ -2919,6 +2925,29 @@ export const ar = defineLocale({
     }
   },
   assistant: {
+    catalogInstall: {
+      preparing: 'جارٍ تجهيز التثبيت…',
+      install: 'تثبيت',
+      advanced: 'خيارات متقدمة',
+      skip: 'تخطٍّ',
+      installing: 'جارٍ التثبيت…',
+      installed: 'مثبّت',
+      notInstalled: 'غير مثبّت',
+      failed: 'فشل',
+      showNames: 'إظهار الأسماء',
+      hideNames: 'إخفاء الأسماء',
+      skill: name => `المهارة ${name}`,
+      kind: { plugin: 'إضافة', skill: 'مهارة' },
+      tier: { official: 'رسمي', community: 'مجتمعي' },
+      targetProfile: profile => `يُثبَّت في ملفك الشخصي ${profile}`,
+      sendFailed: 'تعذّر إرسال ردك. حاول مرة أخرى.',
+      commitLabel: 'الإيداع',
+      subdirLabel: 'المجلد',
+      securityHeading: 'الأمان',
+      scan: { passed: 'نجح الفحص', warnings: 'وجد الفحص تحذيرات', failed: 'فشل الفحص' },
+      requirementsLabel: 'المتطلبات',
+      credentialsHeading: 'بيانات الاعتماد'
+    },
     thread: {
       loadingSession: 'جار تحميل الجلسة...',
       showEarlier: 'عرض الرسائل الأقدم',
