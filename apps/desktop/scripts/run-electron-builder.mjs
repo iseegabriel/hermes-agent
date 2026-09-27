@@ -45,7 +45,10 @@ export function validatePreparedBuilderArgs(args, inputs) {
       continue
     }
     if (arg === '--dir' || arg === '--publish=never' || arg === '--') continue
-    if (/^(?:-c|--config)\.(?:extraMetadata\.(?:version|shortVersion|shortVersionWindows)|directories\.output|mac\.identity)=/.test(arg)) continue
+    // Hermes Remote (client-only): also admit the branding/artifact overrides
+    // used by scripts/dist-client-only.mjs to pack under the Hermes Remote
+    // product identity.
+    if (/^(?:-c|--config)\.(?:extraMetadata\.(?:version|shortVersion|shortVersionWindows|productName)|directories\.output|mac\.identity|productName|appId|executableName|artifactName|win\.legalTrademarks)=/.test(arg)) continue
     if (!arg.startsWith('-') && inputs.formats.includes(arg)) continue
     throw preparationRequired(`Argument is not admitted by prepared packaging: ${arg}`)
   }
