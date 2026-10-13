@@ -27,6 +27,11 @@ function productIdentity(source, stamp) {
   }).trim()
 }
 
+/** Every file bundleElectronMain writes: the only outputs that bake the install stamp. */
+export const electronOutputs = Object.freeze({
+  main: 'electron-main.mjs', preload: 'electron-preload.js', previewGuestPreload: 'preview-guest-preload.js',
+})
+
 /** Bundle main/preload using only the prepared workspace's compiler. */
 export async function bundleElectronMain({ source, out, stamp, dev = false }) {
   source = resolve(source)
@@ -44,10 +49,14 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
   if (process.env.HERMES_DESKTOP_CLIENT_ONLY) {
     define['process.env.HERMES_DESKTOP_CLIENT_ONLY'] = JSON.stringify(true)
   }
+  let bakedStamp = null
   if (!dev) {
     if (!stamp) throw new Error('A prepared install stamp is required')
     const raw = readFileSync(stamp, 'utf8')
     const metadata = JSON.parse(raw)
+    // The baked bytes, and the clock the caller must record: re-reading the stamp
+    // after this point would report a restamp the output never saw.
+    bakedStamp = metadata.builtAt ?? null
     define['process.env.HERMES_DESKTOP_IS_PACKAGED'] = JSON.stringify(true)
     define.__HERMES_INSTALL_STAMP__ = raw
     define.__HERMES_PRODUCT_IDENTITY__ = productIdentity(source, metadata)
@@ -68,14 +77,14 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
     // relaunches before main.ts loads; Electron reads it only from argv.
     entryPoints: [join(source, 'apps/desktop/electron/entry.ts')],
     format: 'esm',
-    outfile: join(out, 'electron-main.mjs'),
+    outfile: join(out, electronOutputs.main),
     banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" + envBanner },
   })
   await build({
     ...common,
     entryPoints: [join(source, 'apps/desktop/electron/preload.ts')],
     format: 'cjs',
-    outfile: join(out, 'electron-preload.js'),
+    outfile: join(out, electronOutputs.preload),
   })
   // Preview-pane <webview> guest preload; main.ts hands this path to the
   // preview webview via will-attach-webview.
@@ -83,8 +92,9 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
     ...common,
     entryPoints: [join(source, 'apps/desktop/electron/preview-guest-preload-entry.ts')],
     format: 'cjs',
-    outfile: join(out, 'preview-guest-preload.js'),
+    outfile: join(out, electronOutputs.previewGuestPreload),
   })
+  return { stampClock: bakedStamp }
 }
 
 if (isMain(import.meta.url)) {
